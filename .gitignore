@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# macOS system files
+.DS_Store
+
+# Models and large artifacts
+models/*.joblib
+models/*.pkl
+
+# Local environment files
+*.env
+.env.*
+
+# Streamlit and log files
+.streamlit/
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build and dist
+build/
+dist/
