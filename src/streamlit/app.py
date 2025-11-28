@@ -9,12 +9,13 @@ import pandas as pd
 import streamlit as st
 
 # -----------------------
-# CONFIG: default project root (change by setting PROJECT_ROOT env var)
+# CONFIG: automatic project root (works on Streamlit Cloud + locally)
 # -----------------------
-DEFAULT_PROJECT_ROOT = "/Users/aryansahoo/Documents/Academic_Stress_EWS_Project"
-PROJECT_ROOT = os.environ.get("PROJECT_ROOT", DEFAULT_PROJECT_ROOT)
+# __file__ = location of this script: /src/streamlit/app.py
+CURRENT_FILE = Path(__file__).resolve()
+PROJECT_ROOT = CURRENT_FILE.parent.parent.parent   # go up 3 levels → repo root
 
-MODELS_DIR = Path(PROJECT_ROOT) / "models"
+MODELS_DIR = PROJECT_ROOT / "models"
 MODEL_PATH = MODELS_DIR / "logistic_pipeline.joblib"
 FEATURES_JSON = MODELS_DIR / "feature_names.json"
 
@@ -23,13 +24,17 @@ FEATURES_JSON = MODELS_DIR / "feature_names.json"
 # -----------------------
 @st.cache_resource(show_spinner=False)
 def load_artifacts(model_path: Path, features_path: Path):
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model not found at: {model_path}")
+
     model = joblib.load(model_path)
+
     if features_path.exists():
         with open(features_path, "r") as fh:
             feature_order = json.load(fh)
     else:
-        # fallback: raise helpful error
         raise FileNotFoundError(f"feature_names.json not found at {features_path}")
+
     return model, feature_order
 
 # UI starts
@@ -44,7 +49,7 @@ _Please fill all fields and click Predict_
 # Sidebar: show project location & load button
 with st.sidebar:
     st.write("**Project root**")
-    st.code(PROJECT_ROOT)
+    st.code(str(PROJECT_ROOT))
     st.write("---")
     st.write("Model file:")
     st.code(str(MODEL_PATH))
@@ -69,18 +74,15 @@ REQUIRED = [
     "goout","Dalc","Walc","health","absences","G1","G2"
 ]
 if not all(f in FEATURE_ORDER for f in REQUIRED):
-    st.warning("Loaded feature order does not exactly match expected required features. App will still attempt to proceed using feature_names.json order.")
+    st.warning("Loaded feature order does not exactly match expected required features.")
 
 # -----------------------
-# Friendly labels and option maps (must match what pipeline expects)
+# Friendly labels and option maps
 # -----------------------
-# For readability in the UI we display user-friendly strings; the dict values
-# are the encoded values that get fed to the pipeline.
-
 FIELD_INFO = {
     "school": ("School", {"GP": "GP", "MS": "MS"}),
     "sex": ("Sex", {"F": "F", "M": "M"}),
-    "age": ("Age (years)", None),  # numeric
+    "age": ("Age (years)", None),
     "address": ("Address", {"U (urban)": "U", "R (rural)": "R"}),
     "famsize": ("Family Size", {"GT3 (>=3)": "GT3", "LE3 (<3)": "LE3"}),
     "Pstatus": ("Parent status", {"T (together)": "T", "A (apart)": "A"}),
@@ -113,16 +115,16 @@ FIELD_INFO = {
 }
 
 # -----------------------
-# Build form (two column layout)
+# Build form layout
 # -----------------------
 st.markdown("## Input features")
 
 with st.form(key="input_form", clear_on_submit=False):
-    cols = st.columns((1,1))  # two equal columns
+    cols = st.columns((1,1))
     inputs: Dict[str, Any] = {}
     col_index = 0
+
     for feat in FEATURE_ORDER:
-        # friendly label & map
         if feat not in FIELD_INFO:
             st.warning(f"Missing UI mapping for feature: {feat}")
             label = feat
@@ -134,30 +136,26 @@ with st.form(key="input_form", clear_on_submit=False):
         col_index += 1
 
         if opts is None:
-            # numeric input
-            if feat in ("age",):
-                val = c.number_input(label, min_value=10, max_value=30, value=17, step=1, key=feat)
-            elif feat in ("absences",):
-                val = c.number_input(label, min_value=0, max_value=93, value=0, step=1, key=feat)
+            if feat == "age":
+                val = c.number_input(label, min_value=10, max_value=30, value=17)
+            elif feat == "absences":
+                val = c.number_input(label, min_value=0, max_value=93, value=0)
             elif feat in ("G1","G2"):
-                val = c.number_input(label, min_value=0, max_value=20, value=10, step=1, key=feat)
+                val = c.number_input(label, min_value=0, max_value=20, value=10)
             else:
-                val = c.number_input(label, value=0, key=feat)
+                val = c.number_input(label, value=0)
             inputs[feat] = val
         else:
-            # dropdown
-            opts_list = list(opts.keys())
-            sel = c.selectbox(label, opts_list, index=0, key=feat)
-            inputs[feat] = opts[sel]  # map displayed label to encoded value
+            sel = c.selectbox(label, list(opts.keys()))
+            inputs[feat] = opts[sel]
 
     submitted = st.form_submit_button("Predict")
 
 # -----------------------
-# When submitted: validate and predict
+# Predict
 # -----------------------
 def validate_inputs(inp: Dict[str, Any]) -> List[str]:
     errs = []
-    # quick sanity checks
     for f in REQUIRED:
         if f not in inp:
             errs.append(f"Missing {f}")
@@ -168,31 +166,23 @@ if submitted:
     if errs:
         st.error("Validation errors: " + "; ".join(errs))
     else:
-        # Create DataFrame with exact FEATURE_ORDER so column names line up for ColumnTransformer
         X = pd.DataFrame([inputs], columns=FEATURE_ORDER)
 
-        # Predict
         try:
-            prob = None
-            try:
-                prob = float(MODEL.predict_proba(X)[:,1][0])
-            except Exception:
-                prob = None
+            prob = float(MODEL.predict_proba(X)[:,1][0])
             pred = int(MODEL.predict(X)[0])
 
             col1, col2 = st.columns((1,1))
-            with col1:
-                st.metric("Prediction (class)", "High stress (1)" if pred==1 else "Low stress (0)")
-            with col2:
-                st.metric("Probability", f"{prob:.3f}" if prob is not None else "N/A")
+            col1.metric("Prediction (class)", "High stress (1)" if pred==1 else "Low stress (0)")
+            col2.metric("Probability", f"{prob:.3f}")
 
-            # Show the input we sent (for reproducibility)
             st.markdown("#### Input (sent to model)")
             st.json(inputs)
 
-            # allow export
-            st.download_button("Download input JSON", data=json.dumps(inputs, indent=2), file_name="stress_input.json")
-
+            st.download_button("Download input JSON",
+                data=json.dumps(inputs, indent=2),
+                file_name="stress_input.json"
+            )
         except Exception as e:
             st.error(f"Prediction failed: {e}")
             st.exception(e)
